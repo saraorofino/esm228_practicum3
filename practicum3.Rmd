@@ -1,0 +1,137 @@
+---
+documentclass: report
+fontsize: 11pt
+header-includes:
+- \usepackage{crimson}
+- \usepackage[T1]{fontenc}
+- \usepackage[margin=1in]{geometry}
+- \renewcommand{\baselinestretch}{1}
+- \usepackage{enumitem}
+output:
+  pdf_document:
+    number_sections: no
+  html_document:
+    df_print: paged
+  word_document: default
+urlcolor: blue
+---
+
+
+\text{\bfseries\LARGE{ESM 228 Practicum 3}}
+\newline
+\text{\Large{Joseph Kilgallen, Sara Orofino, AJ Zekanoski}}
+\newline
+\text{\Large{June 1, 2020}}
+\noindent\makebox[\linewidth]{\rule{\textwidth}{0.4pt}}
+
+```{r libraries, message=FALSE, warning=FALSE, include=FALSE}
+library(DeclareDesign)
+library(kableExtra)
+library(ggplot2)
+```
+
+## Practicum 3 Part 5
+
+
+#### Power Analysis
+
+This analysis explores the minimum detectable effect of the Ventura Water Wise Incentive Program from a fixed sample size. The program has a finite amount of money and can a limit of $3200 per household. Since the program can only support a fixed maximum number of households, we are interested in determining the minimum effect size that is detectable with a fixed sample size.  
+
+
+**Setup power analysis**  
+
+Population: households in Ventura who qualify for the program and apply to participate; based on application numbers we are estimating this is about 600 households. We are choosing the population to be households that apply for the program because we imagine there are differences across groups who would choose to opt in to this program that make comparing directly between those who apply and those who do not apply challenging. By using households who apply to the program as the population and comparing those who apply and receive a rebate to those who apply and do not receive a rebate, we are trying to account for factors that would result in selection bias.     
+
+Water use (water): Residential water use is typically highest in August. Since we have program data from 2016, we will use the average household water consumption in August 2016 to represent average water use. Average customer water use in August 2016 was 94.4 gallons per day. We are assuming that a typical household has somewhere from 2-4 people. Assuming water use is normally distributed with an average of three people per household, mean water use is then 103,368 gallons per year per household or 0.317 acre feet per year per household. Since tthe program data uses acre feet per year, our water use will be acre feet of water per household per year.  
+
+Water use variation (u): We are assuming a mean variation in water use equivalent to one person, 34,456 gallons per year or 0.11 acre feet per year. We assume a standard deviation of approximately half a person's average water use or 0.05 acre feet per year. 
+
+Treatment effect (te): We will be testing for the minimum detectable treatment effect. However, the program estimates that in 2016 58 acre feet of water were saved across the 330 households participating in the program, which is equivalent to a change of 0.157 acre feet per household per year.  
+
+Sample size: We are holding the sample size constant at 330 program participants. which is approximately the maximum number of participants the City can fund with the program's budget. This is based on 2016 program participation data.  
+
+Test statistic: We are using a difference in differences test statistic. The county collects data on household level water use and therefore we will have the ability to compare water use before the program and after the program for households in treatment and control groups. Further, there can be a lot of variation in water use based on size of the yard, the number of people in the home, efficiency of appliances etc. which makes a difference in means a less favorable test statistic.   
+
+
+```{r declare-design}
+
+# declare population
+population <- declare_population(
+  households = add_level(N=600, 
+    water = rnorm(n=N, mean=0.317, sd=0.05), 
+    u= rnorm(n=N, mean= 0.11, sd=0.05)) 
+) 
+
+pop <- population()
+hist(pop[,2], xlab="Baseline Water Usage (acre feet per household per year)", 
+     main="Baseline Water Usage", cex=24)
+
+te <- -0.157 #setting treatment effect
+samp_size <- 330 #setting sample size
+
+
+# potential outcomes:
+potential_outcomes <- 
+  declare_potential_outcomes(
+    Y_D_0= water + u,
+    Y_D_1= water + u + te)
+
+po <- potential_outcomes(pop)
+kable(po[1:5,], digits=1)
+
+# sampling:
+sampling <- declare_sampling(n=samp_size)
+sam <- sampling(po)
+kable(sam[1:5,c(1:2,4:6)], row.names = FALSE,
+      digits = 1)
+
+# random assignment to treatment:
+assigning <- declare_assignment(prob = 0.5,
+                  assignment_variable="D")
+assigned <- assigning(sam)
+kable(assigned[1:5,c(1:2,4:5,7:8)], 
+      digits = 1)
+
+# check for variation in treatment vs. control groups:
+ggplot(data=assigned, aes(x=as.factor(D), y=water)) +
+geom_violin(aes(fill=as.factor(D), color=as.factor(D))) +
+theme_minimal(base_size = 24) + xlab("Assignment")
+
+# reveal and estimand:
+revealing <- declare_reveal(assignment_variables=D)
+
+estimand <- declare_estimand(ATE = te)
+estimand(po)
+
+# using the difference in difference test statistic:
+did <- declare_estimator(Y - water ~ D, 
+                         estimand = estimand,  
+          model =  difference_in_means, label = "DID")
+
+
+# finally declare design:
+design <- population + potential_outcomes + sampling +
+          assigning + revealing + estimand + did
+
+```
+
+\pagebreak
+**Minimum Treatment Effect**  
+
+Find the minimum detectable effect for a set sample size of 330   
+```{r min-te}
+# select a range of possible te values
+designs <- redesign(design, te=seq(from=-0.02, to=0, by=0.001))
+
+diagnoses <- diagnose_design(designs, sims=500)
+
+diagnoses$diagnosands_df %>%
+  ggplot(aes(x=te,y=power)) +
+  geom_line() +
+  geom_hline(yintercept=0.8,
+             linetype="dashed", 
+             color = "red")
+```
+ 
+From this plot it looks like with a power of 0.8 and a sample size of 330, the minimum detectable treatment effect is about -0.016 acre feet per household per year. This translates to approximately 5,214 gallons per household per year or an approximately 5% decrease in individual household water usage per year. Aggregated up to the 330 household participants this would equate to 5.28 acre feet of water per year. This is a rather low amount of water savings relative to the county's average usage in 2016 of 730 acre feet per year. However, the program claimed water savings were an order of magnitude higher than the minimum detectable treatment effect (0.157 acre feet per household or 50 acre feet total in 2016). This magnitude of change would be detected with high power under the current design.    
+
